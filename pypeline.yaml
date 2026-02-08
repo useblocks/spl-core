@@ -4,7 +4,7 @@ pipeline:
           module: pypeline.steps.create_venv
           config:
               bootstrap_script: .bootstrap/bootstrap.py
-              python_executable: python311
+              python_executable: python3
         - step: ScoopInstall
           module: pypeline.steps.scoop_install
     build:

@@ -25,14 +25,22 @@ junit_merger = "spl_core.test_utils.junit_merger:main"
 "Changelog" = "https://github.com/avengineers/spl-core/blob/develop/CHANGELOG.md"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
+python = ">=3.10,<3.14"
 py-app-dev = "^2.1"
 cookiecutter = "==2.6.0"
+
+###
+# Avengineer original
+# gcovr = "^8.6"
+# hammocking = ">=0.8,<0.10"
+###
+# useblocks
 gcovr = "^8.6"
-hammocking = ">=0.8,<0.10"
+hammocking = { git = "https://github.com/useblocks/hammocking.git" }
+###
 kconfiglib = "^14.1"
 typer = "^0"
-doxysphinx = "^3.3"
+doxysphinx = { version = "^3.3", python = "<3.13" }
 sphinx = "^7.3"
 sphinx-rtd-theme = "^2.0"
 sphinxcontrib-mermaid = "^0.9"

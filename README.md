@@ -34,18 +34,48 @@ _SPL Core_ is our CMake module to support multiple projects as variants of one S
 
 ## Installation of Dependencies
 
+### Windows
 ```powershell
 .\build.ps1 -install
 ```
+
+### Linux
+```bash
+# Recommended: Use the installation script
+./install.sh
+
+# Or use the build script
+./build.sh --install
+
+# Or use Make
+make install
+```
+
+**Supported Python versions:** 3.10, 3.11, 3.12, 3.13
 
 ## Building
 
 -   Execution of all tests
 -   Building documentation
 
+### Windows
 ```powershell
 .\build.ps1
 ```
+
+### Linux
+```bash
+# Using build script
+./build.sh
+
+# Or using Make
+make build
+
+# Or build everything (clean, install, build)
+make all
+```
+
+For detailed Linux instructions, see [BUILD_LINUX.md](BUILD_LINUX.md).
 
 ## Initialize a new SPL Project
 
