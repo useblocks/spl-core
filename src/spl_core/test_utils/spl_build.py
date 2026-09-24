@@ -43,6 +43,27 @@ class ArtifactsCollection:
                     self.archive_artifacts.append(ArchiveArtifact(archive_path=Path(artifact_path.name), absolute_path=artifact_path.absolute()))
 
 
+def _component_report_pages_dir(build_dir: Path, component_name: str) -> Path:
+    """Where the variant reports build put a component's report pages.
+
+    The pages sit at their document name inside the HTML output, and the reports
+    target records that name for every component in its ``config.json``. By
+    default it is the component's path in the build directory; a project that sets
+    ``SPL_SPHINX_BINARY_DIR`` gives the pages a name that does not depend on it.
+    Without a record, which is the case before the build ran, fall back to the
+    default.
+    """
+    html_dir = build_dir / "reports" / "html"
+    try:
+        build_config = json.loads((build_dir / "reports" / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        build_config = {}
+    for component_info in build_config.get("components_info", []):
+        if component_info.get("path") == component_name and component_info.get("reports_output_dir"):
+            return html_dir / component_info["reports_output_dir"]
+    return html_dir / build_dir / component_name / "reports"
+
+
 class SplBuild:
     """
     Class for building an SPL repository.
@@ -76,7 +97,7 @@ class SplBuild:
                 "unit_test_results.html",
                 "unit_test_spec.html",
             ],
-            lambda build_dir, component_name: build_dir / "reports" / "html" / build_dir / component_name / "reports",
+            _component_report_pages_dir,
         ),
     }
 

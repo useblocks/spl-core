@@ -267,6 +267,43 @@ def test_get_component_artifacts(build_kit: str, target: str | None, component_n
     assert result == expected_artifacts
 
 
+def test_get_component_artifacts_follows_the_recorded_report_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    The reports target records where each component's pages landed. When a project
+    gives them a stable name (SPL_SPHINX_BINARY_DIR), the report artifacts are
+    looked up there rather than under the build-relative path.
+    """
+    monkeypatch.chdir(tmp_path)
+    spl_build = SplBuild(variant="my_var", build_kit="test", target="reports")
+    reports_config = spl_build.build_dir / "reports" / "config.json"
+    reports_config.parent.mkdir(parents=True)
+    reports_config.write_text(
+        json.dumps(
+            {
+                "target": "reports",
+                "components_info": [
+                    {"path": "other_component", "reports_output_dir": "generated/other_component/reports"},
+                    {"path": "my_component", "reports_output_dir": "generated/my_component/reports"},
+                    {"path": "no_tests", "reports_output_dir": ""},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    pages_dir = Path("build/my_var/test/reports/html/generated/my_component/reports")
+    assert spl_build.get_component_artifacts("my_component") == [
+        pages_dir / "coverage.html",
+        pages_dir / "coverage/index.html",
+        pages_dir / "unit_test_results.html",
+        pages_dir / "unit_test_spec.html",
+    ]
+
+    # a component without a recorded location keeps the build-relative default
+    default_dir = Path("build/my_var/test/reports/html/build/my_var/test/no_tests/reports")
+    assert spl_build.get_component_artifacts("no_tests")[0] == default_dir / "coverage.html"
+
+
 @pytest.mark.parametrize(
     "build_kit,target,component_names,expected_count",
     [

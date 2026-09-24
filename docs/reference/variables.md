@@ -64,12 +64,44 @@ The directory `sphinx-build` reads its documents and `conf.py` from, for every d
 and reports target. A relative path is taken relative to the project root. Every
 path spl-core writes for Sphinx, in the `config.json` include patterns, the
 component information and the generated toctrees, is relative to this directory,
-so what a build includes has to be reachable inside it.
+so what a build includes has to be reachable inside it. For the pages spl-core
+generates, see {ref}`SPL_SPHINX_BINARY_DIR <SPL_SPHINX_BINARY_DIR>`.
 
 **Default:** the project root (`PROJECT_SOURCE_DIR`)
 
 ```cmake
 set(SPL_SPHINX_SOURCE_DIR docs)
+```
+
+(SPL_SPHINX_BINARY_DIR)=
+
+## SPL_SPHINX_BINARY_DIR
+
+The path under which the Sphinx builds reach the binary directory. spl-core writes
+its report pages, source listings and wrapper pages into the binary directory,
+whose location depends on the variant, the build kit and the build type, so by
+default their document names do too, and a hand-written toctree can only reach
+them with a glob. When this variable names a stable path to the binary
+directory, typically a symlink or a junction inside the Sphinx source directory
+that the project points at the configured build, every generated page is named
+through it instead: `generated/components/<component>/reports/coverage` rather
+than `build/<variant>/<kit>/components/<component>/reports/coverage`.
+
+Everything that depends on those names follows: the `config.json` include
+patterns and component information, the generated toctrees, the location the
+gcovr HTML report is written to next to its coverage page, and the report
+artifacts `SplBuild` looks up. A relative path is taken relative to the project
+root.
+
+Because the path usually is a link the project re-points, every docs and reports
+build first checks that it still leads to its own binary directory, and fails
+with a message naming both paths if another build directory was configured in
+the meantime.
+
+**Default:** the binary directory itself (`CMAKE_BINARY_DIR`)
+
+```cmake
+set(SPL_SPHINX_BINARY_DIR ${CMAKE_SOURCE_DIR}/generated)
 ```
 
 ## COMPONENT_NAMES

@@ -332,9 +332,11 @@ macro(spl_create_component)
             # This might cause incremental builds to not update parts of the documentation.
             # To avoid this the command passes -E to make sphinx-build write all files new.
             _spl_sphinx_build_command(_spl_sphinx_build SHAPE docs CONFIG ${_docs_config_json} OUTPUT_DIR ${_component_docs_html_out_dir})
+            _spl_sphinx_binary_dir_check(_spl_sphinx_check)
             add_custom_target(
                 ${component_name}_docs
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${_component_docs_out_dir}
+                ${_spl_sphinx_check}
                 COMMAND ${_spl_sphinx_build}
                 BYPRODUCTS ${_component_docs_html_out_dir}/index.html
             )
@@ -406,9 +408,11 @@ Code Coverage
                 # No OUTPUT is defined to force execution of this target every time
                 # TODO: list of dependencies is not complete
                 _spl_sphinx_build_command(_spl_sphinx_build SHAPE reports CONFIG ${_reports_config_json} OUTPUT_DIR ${_component_reports_html_out_dir})
+                _spl_sphinx_binary_dir_check(_spl_sphinx_check)
                 add_custom_target(
                     ${component_name}_report
                     COMMAND ${CMAKE_COMMAND} -E make_directory ${_component_reports_out_dir}
+                    ${_spl_sphinx_check}
                     COMMAND ${_spl_sphinx_build}
                     BYPRODUCTS ${_component_reports_html_out_dir}/index.html
                     DEPENDS ${TEST_OUT_JUNIT} ${_cov_out_html}
@@ -495,13 +499,65 @@ function(_spl_sphinx_source_dir out_var)
     set(${out_var} "${_source_dir}" PARENT_SCOPE)
 endfunction()
 
+# The path under which Sphinx reaches the binary directory: SPL_SPHINX_BINARY_DIR when
+# the project sets it, the binary directory itself otherwise. A relative path is
+# taken relative to the project root.
+function(_spl_sphinx_binary_dir out_var)
+    if(SPL_SPHINX_BINARY_DIR)
+        get_filename_component(_binary_dir "${SPL_SPHINX_BINARY_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+    else()
+        set(_binary_dir "${CMAKE_BINARY_DIR}")
+    endif()
+    set(${out_var} "${_binary_dir}" PARENT_SCOPE)
+endfunction()
+
 # A path as Sphinx names it: relative to the Sphinx source directory. This is the
 # form spl-core writes into include patterns, the component information and the
 # generated toctrees, and the one a document name is derived from.
+#
+# Everything spl-core generates lives in the binary directory, whose location
+# depends on the variant, the build kit and the build type. When
+# SPL_SPHINX_BINARY_DIR names another path to it, typically a symlink or a junction
+# inside the Sphinx source directory, a path inside the binary directory is
+# expressed through that path instead. The generated pages then have document
+# names that do not change from one build directory to the next, and every path
+# derived from them, such as where a coverage report has to sit next to its page,
+# follows.
 function(_spl_sphinx_relative_path out_var path)
     _spl_sphinx_source_dir(_source_dir)
-    file(RELATIVE_PATH _relative_path "${_source_dir}" "${path}")
+    _spl_sphinx_binary_dir(_binary_dir)
+    set(_path "${path}")
+    if(NOT _binary_dir STREQUAL CMAKE_BINARY_DIR)
+        file(RELATIVE_PATH _inside_binary_dir "${CMAKE_BINARY_DIR}" "${path}")
+        if(_inside_binary_dir STREQUAL "")
+            set(_path "${_binary_dir}")
+        elseif(NOT IS_ABSOLUTE "${_inside_binary_dir}" AND NOT _inside_binary_dir MATCHES "^\\.\\.(/|$)")
+            set(_path "${_binary_dir}/${_inside_binary_dir}")
+        endif()
+    endif()
+    file(RELATIVE_PATH _relative_path "${_source_dir}" "${_path}")
     set(${out_var} "${_relative_path}" PARENT_SCOPE)
+endfunction()
+
+# The check a docs or reports build runs before sphinx-build when SPL_SPHINX_BINARY_DIR
+# is set, including its COMMAND keyword, or nothing otherwise. The path is usually
+# a link the project re-points whenever it configures a build directory, so by the
+# time this build runs it may lead to another build's output. Sphinx would then
+# read that build's generated pages without a word; the check stops the build
+# instead.
+function(_spl_sphinx_binary_dir_check out_var)
+    _spl_sphinx_binary_dir(_binary_dir)
+    if(_binary_dir STREQUAL CMAKE_BINARY_DIR)
+        set(${out_var} "" PARENT_SCOPE)
+    else()
+        set(${out_var}
+            COMMAND ${CMAKE_COMMAND}
+            -DSPL_SPHINX_BINARY_DIR=${_binary_dir}
+            -DSPL_BINARY_DIR=${CMAKE_BINARY_DIR}
+            -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/check_sphinx_binary_dir.cmake
+            PARENT_SCOPE
+        )
+    endif()
 endfunction()
 
 # The command that runs one Sphinx build, for the variant targets and the
@@ -557,9 +613,11 @@ macro(_spl_create_docs_target)
     # add the generated files as dependency to cmake configure step
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_docs_config_json})
     _spl_sphinx_build_command(_spl_sphinx_build SHAPE docs CONFIG ${_docs_config_json} OUTPUT_DIR ${_docs_html_out_dir})
+    _spl_sphinx_binary_dir_check(_spl_sphinx_check)
     add_custom_target(
         docs
         COMMAND ${CMAKE_COMMAND} -E make_directory ${_docs_out_dir}
+        ${_spl_sphinx_check}
         COMMAND ${_spl_sphinx_build}
         BYPRODUCTS ${_docs_html_out_dir}/index.html
     )
@@ -698,10 +756,12 @@ Code Coverage
 
     # The command passes -E to sphinx-build to make sure all files are regenerated.
     _spl_sphinx_build_command(_spl_sphinx_build SHAPE reports CONFIG ${_reports_config_json} OUTPUT_DIR ${_reports_html_output_dir})
+    _spl_sphinx_binary_dir_check(_spl_sphinx_check)
     add_custom_target(
         reports
         ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory ${_reports_output_dir}
+        ${_spl_sphinx_check}
         COMMAND ${_spl_sphinx_build}
         BYPRODUCTS ${_reports_html_output_dir}/index.html
         DEPENDS ${JUNIT_OUT_VARIANT_XML} ${COV_OUT_VARIANT_JSON} _components_variant_coverage_html_target source_docs

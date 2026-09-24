@@ -154,6 +154,81 @@ endif()
 # cleanup
 unset(SPL_SPHINX_SOURCE_DIR)
 
+# ## test: SPL_SPHINX_BINARY_DIR (generated pages keep stable document names) #########
+# given a project that reaches the binary directory through `generated` in its source tree
+set(SPL_SPHINX_BINARY_DIR generated)
+
+# when
+_spl_sphinx_relative_path(alias_reports_path "${PROJECT_BINARY_DIR}/components/x/reports")
+_spl_sphinx_relative_path(alias_binary_dir_path "${PROJECT_BINARY_DIR}")
+_spl_sphinx_relative_path(alias_source_path "${PROJECT_SOURCE_DIR}/component/doc")
+_spl_sphinx_binary_dir_check(alias_check)
+
+# then: paths inside the binary directory are named through it, other paths are not touched
+if(NOT alias_reports_path STREQUAL "generated/components/x/reports")
+    message(FATAL_ERROR "Failing Test case: expected 'generated/components/x/reports' but got '${alias_reports_path}'.")
+endif()
+
+if(NOT alias_binary_dir_path STREQUAL "generated")
+    message(FATAL_ERROR "Failing Test case: expected 'generated' but got '${alias_binary_dir_path}'.")
+endif()
+
+if(NOT alias_source_path STREQUAL "component/doc")
+    message(FATAL_ERROR "Failing Test case: expected 'component/doc' but got '${alias_source_path}'.")
+endif()
+
+# and: a documentation build checks the path before running Sphinx
+if(NOT alias_check MATCHES "^COMMAND;.*check_sphinx_binary_dir\\.cmake$")
+    message(FATAL_ERROR "Failing Test case: expected a COMMAND running check_sphinx_binary_dir.cmake but got '${alias_check}'.")
+endif()
+
+# given the default configuration
+unset(SPL_SPHINX_BINARY_DIR)
+
+# when
+_spl_sphinx_binary_dir_check(default_check)
+
+# then: nothing is added to the documentation build
+if(NOT default_check STREQUAL "")
+    message(FATAL_ERROR "Failing Test case: expected no check but got '${default_check}'.")
+endif()
+
+# ## test: check_sphinx_binary_dir.cmake #########
+set(check_sphinx_binary_dir_script ${CMAKE_CURRENT_LIST_DIR}/../../../src/spl_core/check_sphinx_binary_dir.cmake)
+
+# when the path leads to the binary directory being built
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -DSPL_SPHINX_BINARY_DIR=${PROJECT_BINARY_DIR} -DSPL_BINARY_DIR=${PROJECT_BINARY_DIR} -P ${check_sphinx_binary_dir_script}
+    RESULT_VARIABLE check_same_dir_result OUTPUT_QUIET ERROR_QUIET
+)
+
+# then
+if(NOT check_same_dir_result EQUAL 0)
+    message(FATAL_ERROR "Failing Test case: the check must pass when the path leads to the binary directory.")
+endif()
+
+# when it leads somewhere else, as after configuring another build directory
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -DSPL_SPHINX_BINARY_DIR=${PROJECT_SOURCE_DIR} -DSPL_BINARY_DIR=${PROJECT_BINARY_DIR} -P ${check_sphinx_binary_dir_script}
+    RESULT_VARIABLE check_other_dir_result OUTPUT_QUIET ERROR_QUIET
+)
+
+# then
+if(check_other_dir_result EQUAL 0)
+    message(FATAL_ERROR "Failing Test case: the check must fail when the path leads to another directory.")
+endif()
+
+# when it does not exist
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -DSPL_SPHINX_BINARY_DIR=${PROJECT_BINARY_DIR}/does_not_exist -DSPL_BINARY_DIR=${PROJECT_BINARY_DIR} -P ${check_sphinx_binary_dir_script}
+    RESULT_VARIABLE check_missing_dir_result OUTPUT_QUIET ERROR_QUIET
+)
+
+# then
+if(check_missing_dir_result EQUAL 0)
+    message(FATAL_ERROR "Failing Test case: the check must fail when the path does not exist.")
+endif()
+
 # ## test: _spl_get_absolute_path #########
 # when
 _spl_get_absolute_path(absolute_path "${PROJECT_SOURCE_DIR}/some_dir")
