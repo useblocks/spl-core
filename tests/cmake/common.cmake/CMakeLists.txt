@@ -45,6 +45,190 @@ if(NOT doc_name_ext STREQUAL "bar.c")
     message(FATAL_ERROR "Failing Test case: expected 'bar.c' but got '${doc_name_ext}'.")
 endif()
 
+# ## test: _spl_clanguru_docs_options (Jinja raw tags are optional) #########
+# given the default configuration
+
+# when
+_spl_clanguru_docs_options(clanguru_default_options)
+
+# then: listings keep their Jinja raw tags, as before the option existed
+if(NOT clanguru_default_options STREQUAL "--format;rst;--jinja-raw-tags")
+    message(FATAL_ERROR "Failing Test case: expected '--format;rst;--jinja-raw-tags' but got '${clanguru_default_options}'.")
+endif()
+
+# given a project that renders no document through Jinja
+set(SPL_SOURCE_DOCS_JINJA_RAW_TAGS OFF)
+
+# when
+_spl_clanguru_docs_options(clanguru_plain_options)
+
+# then
+if(NOT clanguru_plain_options STREQUAL "--format;rst")
+    message(FATAL_ERROR "Failing Test case: expected '--format;rst' but got '${clanguru_plain_options}'.")
+endif()
+
+# cleanup
+unset(SPL_SOURCE_DOCS_JINJA_RAW_TAGS)
+
+# ## test: _spl_sphinx_build_command (variant data file per build shape) #########
+# given a project that configures no variant data file
+set(AUTOCONF_JSON /build/kconfig/autoconf.json)
+
+# when
+_spl_sphinx_build_command(sphinx_plain_command SHAPE reports CONFIG /build/reports/config.json OUTPUT_DIR /build/reports/html)
+
+# then: the command is exactly the one the targets have always run
+set(expected_sphinx_plain_command
+    ${CMAKE_COMMAND} -E env
+    SPHINX_BUILD_CONFIGURATION_FILE=/build/reports/config.json
+    AUTOCONF_JSON_FILE=/build/kconfig/autoconf.json
+    VARIANT=mytestvariant
+    -- sphinx-build -E -b html ${PROJECT_SOURCE_DIR} /build/reports/html
+)
+if(NOT sphinx_plain_command STREQUAL expected_sphinx_plain_command)
+    message(FATAL_ERROR "Failing Test case: expected '${expected_sphinx_plain_command}' but got '${sphinx_plain_command}'.")
+endif()
+
+# given a variant data file for each build shape
+set(SPL_VARIANT_DATA_FILE_DOCS /variants/docs.json)
+set(SPL_VARIANT_DATA_FILE_REPORTS /variants/reports.json)
+
+# when
+_spl_sphinx_build_command(sphinx_docs_command SHAPE docs CONFIG /build/docs/config.json OUTPUT_DIR /build/docs/html)
+_spl_sphinx_build_command(sphinx_reports_command SHAPE reports CONFIG /build/reports/config.json OUTPUT_DIR /build/reports/html)
+
+# then: each build is given its own file, and only that one, as a sphinx-build
+# option in front of the source and output directories
+if(NOT sphinx_docs_command MATCHES ";-D;needs_variant_data_file=/variants/docs\\.json;[^;]+;/build/docs/html$" OR sphinx_docs_command MATCHES "reports\\.json")
+    message(FATAL_ERROR "Failing Test case: the docs build must get the docs variant data file only, got '${sphinx_docs_command}'.")
+endif()
+
+if(NOT sphinx_reports_command MATCHES ";-D;needs_variant_data_file=/variants/reports\\.json;[^;]+;/build/reports/html$" OR sphinx_reports_command MATCHES "docs\\.json")
+    message(FATAL_ERROR "Failing Test case: the reports build must get the reports variant data file only, got '${sphinx_reports_command}'.")
+endif()
+
+# cleanup
+unset(AUTOCONF_JSON)
+unset(SPL_VARIANT_DATA_FILE_DOCS)
+unset(SPL_VARIANT_DATA_FILE_REPORTS)
+
+# ## test: _spl_sphinx_source_dir and _spl_sphinx_relative_path #########
+# given the default configuration
+
+# when
+_spl_sphinx_source_dir(default_sphinx_source_dir)
+_spl_sphinx_relative_path(default_reports_path "${PROJECT_BINARY_DIR}/components/x/reports")
+
+# then: Sphinx reads the project root, as before the option existed
+if(NOT default_sphinx_source_dir STREQUAL PROJECT_SOURCE_DIR)
+    message(FATAL_ERROR "Failing Test case: expected '${PROJECT_SOURCE_DIR}' but got '${default_sphinx_source_dir}'.")
+endif()
+
+file(RELATIVE_PATH expected_default_reports_path "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/components/x/reports")
+if(NOT default_reports_path STREQUAL expected_default_reports_path)
+    message(FATAL_ERROR "Failing Test case: expected '${expected_default_reports_path}' but got '${default_reports_path}'.")
+endif()
+
+# given a project that keeps its documents in a docs folder
+set(SPL_SPHINX_SOURCE_DIR docs)
+
+# when
+_spl_sphinx_source_dir(docs_sphinx_source_dir)
+_spl_sphinx_relative_path(docs_relative_path "${PROJECT_SOURCE_DIR}/docs/doc/index.md")
+_spl_sphinx_build_command(docs_sphinx_command SHAPE docs CONFIG /build/docs/config.json OUTPUT_DIR /build/docs/html)
+
+# then: the folder is resolved against the project root, paths are named from it,
+# and sphinx-build reads it instead of the project root
+if(NOT docs_sphinx_source_dir STREQUAL "${PROJECT_SOURCE_DIR}/docs")
+    message(FATAL_ERROR "Failing Test case: expected '${PROJECT_SOURCE_DIR}/docs' but got '${docs_sphinx_source_dir}'.")
+endif()
+
+if(NOT docs_relative_path STREQUAL "doc/index.md")
+    message(FATAL_ERROR "Failing Test case: expected 'doc/index.md' but got '${docs_relative_path}'.")
+endif()
+
+if(NOT "${PROJECT_SOURCE_DIR}/docs" IN_LIST docs_sphinx_command OR "${PROJECT_SOURCE_DIR}" IN_LIST docs_sphinx_command)
+    message(FATAL_ERROR "Failing Test case: sphinx-build must read '${PROJECT_SOURCE_DIR}/docs', got '${docs_sphinx_command}'.")
+endif()
+
+# cleanup
+unset(SPL_SPHINX_SOURCE_DIR)
+
+# ## test: SPL_SPHINX_BINARY_DIR (generated pages keep stable document names) #########
+# given a project that reaches the binary directory through `generated` in its source tree
+set(SPL_SPHINX_BINARY_DIR generated)
+
+# when
+_spl_sphinx_relative_path(alias_reports_path "${PROJECT_BINARY_DIR}/components/x/reports")
+_spl_sphinx_relative_path(alias_binary_dir_path "${PROJECT_BINARY_DIR}")
+_spl_sphinx_relative_path(alias_source_path "${PROJECT_SOURCE_DIR}/component/doc")
+_spl_sphinx_binary_dir_check(alias_check)
+
+# then: paths inside the binary directory are named through it, other paths are not touched
+if(NOT alias_reports_path STREQUAL "generated/components/x/reports")
+    message(FATAL_ERROR "Failing Test case: expected 'generated/components/x/reports' but got '${alias_reports_path}'.")
+endif()
+
+if(NOT alias_binary_dir_path STREQUAL "generated")
+    message(FATAL_ERROR "Failing Test case: expected 'generated' but got '${alias_binary_dir_path}'.")
+endif()
+
+if(NOT alias_source_path STREQUAL "component/doc")
+    message(FATAL_ERROR "Failing Test case: expected 'component/doc' but got '${alias_source_path}'.")
+endif()
+
+# and: a documentation build checks the path before running Sphinx
+if(NOT alias_check MATCHES "^COMMAND;.*check_sphinx_binary_dir\\.cmake$")
+    message(FATAL_ERROR "Failing Test case: expected a COMMAND running check_sphinx_binary_dir.cmake but got '${alias_check}'.")
+endif()
+
+# given the default configuration
+unset(SPL_SPHINX_BINARY_DIR)
+
+# when
+_spl_sphinx_binary_dir_check(default_check)
+
+# then: nothing is added to the documentation build
+if(NOT default_check STREQUAL "")
+    message(FATAL_ERROR "Failing Test case: expected no check but got '${default_check}'.")
+endif()
+
+# ## test: check_sphinx_binary_dir.cmake #########
+set(check_sphinx_binary_dir_script ${CMAKE_CURRENT_LIST_DIR}/../../../src/spl_core/check_sphinx_binary_dir.cmake)
+
+# when the path leads to the binary directory being built
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -DSPL_SPHINX_BINARY_DIR=${PROJECT_BINARY_DIR} -DSPL_BINARY_DIR=${PROJECT_BINARY_DIR} -P ${check_sphinx_binary_dir_script}
+    RESULT_VARIABLE check_same_dir_result OUTPUT_QUIET ERROR_QUIET
+)
+
+# then
+if(NOT check_same_dir_result EQUAL 0)
+    message(FATAL_ERROR "Failing Test case: the check must pass when the path leads to the binary directory.")
+endif()
+
+# when it leads somewhere else, as after configuring another build directory
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -DSPL_SPHINX_BINARY_DIR=${PROJECT_SOURCE_DIR} -DSPL_BINARY_DIR=${PROJECT_BINARY_DIR} -P ${check_sphinx_binary_dir_script}
+    RESULT_VARIABLE check_other_dir_result OUTPUT_QUIET ERROR_QUIET
+)
+
+# then
+if(check_other_dir_result EQUAL 0)
+    message(FATAL_ERROR "Failing Test case: the check must fail when the path leads to another directory.")
+endif()
+
+# when it does not exist
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -DSPL_SPHINX_BINARY_DIR=${PROJECT_BINARY_DIR}/does_not_exist -DSPL_BINARY_DIR=${PROJECT_BINARY_DIR} -P ${check_sphinx_binary_dir_script}
+    RESULT_VARIABLE check_missing_dir_result OUTPUT_QUIET ERROR_QUIET
+)
+
+# then
+if(check_missing_dir_result EQUAL 0)
+    message(FATAL_ERROR "Failing Test case: the check must fail when the path does not exist.")
+endif()
+
 # ## test: _spl_get_absolute_path #########
 # when
 _spl_get_absolute_path(absolute_path "${PROJECT_SOURCE_DIR}/some_dir")

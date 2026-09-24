@@ -310,19 +310,16 @@ macro(spl_create_component)
         set(_component_docs_out_dir ${CMAKE_CURRENT_BINARY_DIR}/docs)
         set(_component_reports_out_dir ${CMAKE_CURRENT_BINARY_DIR}/reports)
 
-        # The Sphinx source directory is ALWAYS the project root
-        set(_sphinx_source_dir ${PROJECT_SOURCE_DIR})
-
         # Create component docs target if there is an index.rst file in the component's doc directory
         if(EXISTS ${_component_doc_dir}/index.rst OR EXISTS ${_component_doc_dir}/index.md)
-            file(RELATIVE_PATH _rel_component_docs_out_dir ${_sphinx_source_dir} ${_component_docs_out_dir})
+            _spl_sphinx_relative_path(_rel_component_docs_out_dir ${_component_docs_out_dir})
             string(JSON _component_info SET "${_component_info}" docs_output_dir "\"${_rel_component_docs_out_dir}\"")
             string(JSON _component_info SET "${_component_info}" has_docs "\"True\"")
             set(_component_docs_html_out_dir ${_component_docs_out_dir}/html)
 
             # create the config.json file. This is exported as SPHINX_BUILD_CONFIGURATION_FILE env variable
             set(_docs_config_json ${_component_docs_out_dir}/config.json)
-            file(RELATIVE_PATH _rel_component_doc_dir ${_sphinx_source_dir} ${_component_doc_dir})
+            _spl_sphinx_relative_path(_rel_component_doc_dir ${_component_doc_dir})
             file(WRITE ${_docs_config_json} "{
                 \"component_info\": ${_component_info},
                 \"include_patterns\": [\"${_rel_component_doc_dir}/**\",\"${_rel_component_docs_out_dir}/**\"]
@@ -330,19 +327,22 @@ macro(spl_create_component)
 
             # add the generated files as dependency to cmake configure step
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_docs_config_json})
+
+            # We do not know all dependencies for generating the docs (apart from the rst files).
+            # This might cause incremental builds to not update parts of the documentation.
+            # To avoid this the command passes -E to make sphinx-build write all files new.
+            _spl_sphinx_build_command(_spl_sphinx_build SHAPE docs CONFIG ${_docs_config_json} OUTPUT_DIR ${_component_docs_html_out_dir})
+            _spl_sphinx_binary_dir_check(_spl_sphinx_check)
             add_custom_target(
                 ${component_name}_docs
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${_component_docs_out_dir}
-
-                # We do not know all dependencies for generating the docs (apart from the rst files).
-                # This might cause incremental builds to not update parts of the documentation.
-                # To avoid this we are using the -E option to make sphinx-build writing all files new.
-                COMMAND ${CMAKE_COMMAND} -E env SPHINX_BUILD_CONFIGURATION_FILE=${_docs_config_json} AUTOCONF_JSON_FILE=${AUTOCONF_JSON} VARIANT=${VARIANT} -- sphinx-build -E -b html ${_sphinx_source_dir} ${_component_docs_html_out_dir}
+                ${_spl_sphinx_check}
+                COMMAND ${_spl_sphinx_build}
                 BYPRODUCTS ${_component_docs_html_out_dir}/index.html
             )
 
             if(TEST_SOURCES)
-                file(RELATIVE_PATH _rel_component_reports_out_dir ${_sphinx_source_dir} ${_component_reports_out_dir})
+                _spl_sphinx_relative_path(_rel_component_reports_out_dir ${_component_reports_out_dir})
                 string(JSON _component_info SET "${_component_info}" reports_output_dir "\"${_rel_component_reports_out_dir}\"")
                 string(JSON _component_info SET "${_component_info}" has_reports "\"True\"")
                 set(_component_reports_html_out_dir ${_component_reports_out_dir}/html)
@@ -407,10 +407,13 @@ Code Coverage
 
                 # No OUTPUT is defined to force execution of this target every time
                 # TODO: list of dependencies is not complete
+                _spl_sphinx_build_command(_spl_sphinx_build SHAPE reports CONFIG ${_reports_config_json} OUTPUT_DIR ${_component_reports_html_out_dir})
+                _spl_sphinx_binary_dir_check(_spl_sphinx_check)
                 add_custom_target(
                     ${component_name}_report
                     COMMAND ${CMAKE_COMMAND} -E make_directory ${_component_reports_out_dir}
-                    COMMAND ${CMAKE_COMMAND} -E env SPHINX_BUILD_CONFIGURATION_FILE=${_reports_config_json} AUTOCONF_JSON_FILE=${AUTOCONF_JSON} VARIANT=${VARIANT} -- sphinx-build -E -b html ${_sphinx_source_dir} ${_component_reports_html_out_dir}
+                    ${_spl_sphinx_check}
+                    COMMAND ${_spl_sphinx_build}
                     BYPRODUCTS ${_component_reports_html_out_dir}/index.html
                     DEPENDS ${TEST_OUT_JUNIT} ${_cov_out_html}
                 )
@@ -484,6 +487,113 @@ Code Coverage
     set(COMPONENTS_INFO ${COMPONENTS_INFO} PARENT_SCOPE)
 endmacro()
 
+# The directory sphinx-build reads its documents and conf.py from: SPL_SPHINX_SOURCE_DIR
+# when the project sets it, the project root otherwise. A relative path is taken
+# relative to the project root.
+function(_spl_sphinx_source_dir out_var)
+    if(SPL_SPHINX_SOURCE_DIR)
+        get_filename_component(_source_dir "${SPL_SPHINX_SOURCE_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+    else()
+        set(_source_dir "${PROJECT_SOURCE_DIR}")
+    endif()
+    set(${out_var} "${_source_dir}" PARENT_SCOPE)
+endfunction()
+
+# The path under which Sphinx reaches the binary directory: SPL_SPHINX_BINARY_DIR when
+# the project sets it, the binary directory itself otherwise. A relative path is
+# taken relative to the project root.
+function(_spl_sphinx_binary_dir out_var)
+    if(SPL_SPHINX_BINARY_DIR)
+        get_filename_component(_binary_dir "${SPL_SPHINX_BINARY_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+    else()
+        set(_binary_dir "${CMAKE_BINARY_DIR}")
+    endif()
+    set(${out_var} "${_binary_dir}" PARENT_SCOPE)
+endfunction()
+
+# A path as Sphinx names it: relative to the Sphinx source directory. This is the
+# form spl-core writes into include patterns, the component information and the
+# generated toctrees, and the one a document name is derived from.
+#
+# Everything spl-core generates lives in the binary directory, whose location
+# depends on the variant, the build kit and the build type. When
+# SPL_SPHINX_BINARY_DIR names another path to it, typically a symlink or a junction
+# inside the Sphinx source directory, a path inside the binary directory is
+# expressed through that path instead. The generated pages then have document
+# names that do not change from one build directory to the next, and every path
+# derived from them, such as where a coverage report has to sit next to its page,
+# follows.
+function(_spl_sphinx_relative_path out_var path)
+    _spl_sphinx_source_dir(_source_dir)
+    _spl_sphinx_binary_dir(_binary_dir)
+    set(_path "${path}")
+    if(NOT _binary_dir STREQUAL CMAKE_BINARY_DIR)
+        file(RELATIVE_PATH _inside_binary_dir "${CMAKE_BINARY_DIR}" "${path}")
+        if(_inside_binary_dir STREQUAL "")
+            set(_path "${_binary_dir}")
+        elseif(NOT IS_ABSOLUTE "${_inside_binary_dir}" AND NOT _inside_binary_dir MATCHES "^\\.\\.(/|$)")
+            set(_path "${_binary_dir}/${_inside_binary_dir}")
+        endif()
+    endif()
+    file(RELATIVE_PATH _relative_path "${_source_dir}" "${_path}")
+    set(${out_var} "${_relative_path}" PARENT_SCOPE)
+endfunction()
+
+# The check a docs or reports build runs before sphinx-build when SPL_SPHINX_BINARY_DIR
+# is set, including its COMMAND keyword, or nothing otherwise. The path is usually
+# a link the project re-points whenever it configures a build directory, so by the
+# time this build runs it may lead to another build's output. Sphinx would then
+# read that build's generated pages without a word; the check stops the build
+# instead.
+function(_spl_sphinx_binary_dir_check out_var)
+    _spl_sphinx_binary_dir(_binary_dir)
+    if(_binary_dir STREQUAL CMAKE_BINARY_DIR)
+        set(${out_var} "" PARENT_SCOPE)
+    else()
+        set(${out_var}
+            COMMAND ${CMAKE_COMMAND}
+            -DSPL_SPHINX_BINARY_DIR=${_binary_dir}
+            -DSPL_BINARY_DIR=${CMAKE_BINARY_DIR}
+            -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/check_sphinx_binary_dir.cmake
+            PARENT_SCOPE
+        )
+    endif()
+endfunction()
+
+# The command that runs one Sphinx build, for the variant targets and the
+# per-component targets alike.
+#
+# SHAPE is `docs` or `reports`. A project whose documents are gated on sphinx-needs
+# variant data sets SPL_VARIANT_DATA_FILE_DOCS and SPL_VARIANT_DATA_FILE_REPORTS to
+# the file each shape reads, and the build gets it as `-D needs_variant_data_file=`.
+# sphinx-needs keeps a command-line override even when the project's
+# needs_from_toml names another file, so conf.py needs no code to select it.
+function(_spl_sphinx_build_command out_var)
+    cmake_parse_arguments(ARG "" "SHAPE;CONFIG;OUTPUT_DIR" "" ${ARGN})
+    if(ARG_SHAPE STREQUAL "docs")
+        set(_variant_data_file "${SPL_VARIANT_DATA_FILE_DOCS}")
+    elseif(ARG_SHAPE STREQUAL "reports")
+        set(_variant_data_file "${SPL_VARIANT_DATA_FILE_REPORTS}")
+    else()
+        message(FATAL_ERROR "_spl_sphinx_build_command: SHAPE must be 'docs' or 'reports', not '${ARG_SHAPE}'.")
+    endif()
+
+    set(_options -E -b html)
+    if(_variant_data_file)
+        list(APPEND _options -D needs_variant_data_file=${_variant_data_file})
+    endif()
+
+    _spl_sphinx_source_dir(_source_dir)
+    set(${out_var}
+        ${CMAKE_COMMAND} -E env
+        SPHINX_BUILD_CONFIGURATION_FILE=${ARG_CONFIG}
+        AUTOCONF_JSON_FILE=${AUTOCONF_JSON}
+        VARIANT=${VARIANT}
+        -- sphinx-build ${_options} ${_source_dir} ${ARG_OUTPUT_DIR}
+        PARENT_SCOPE
+    )
+endfunction()
+
 macro(_spl_create_docs_target)
     set(_docs_out_dir ${CMAKE_CURRENT_BINARY_DIR}/docs)
     set(_docs_html_out_dir ${_docs_out_dir}/html)
@@ -502,17 +612,20 @@ macro(_spl_create_docs_target)
 
     # add the generated files as dependency to cmake configure step
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_docs_config_json})
+    _spl_sphinx_build_command(_spl_sphinx_build SHAPE docs CONFIG ${_docs_config_json} OUTPUT_DIR ${_docs_html_out_dir})
+    _spl_sphinx_binary_dir_check(_spl_sphinx_check)
     add_custom_target(
         docs
         COMMAND ${CMAKE_COMMAND} -E make_directory ${_docs_out_dir}
-        COMMAND ${CMAKE_COMMAND} -E env SPHINX_BUILD_CONFIGURATION_FILE=${_docs_config_json} AUTOCONF_JSON_FILE=${AUTOCONF_JSON} VARIANT=${VARIANT} -- sphinx-build -E -b html ${PROJECT_SOURCE_DIR} ${_docs_html_out_dir}
+        ${_spl_sphinx_check}
+        COMMAND ${_spl_sphinx_build}
         BYPRODUCTS ${_docs_html_out_dir}/index.html
     )
 endmacro()
 
 macro(_spl_create_reports_target)
     set(_reports_output_dir ${CMAKE_CURRENT_BINARY_DIR}/reports)
-    file(RELATIVE_PATH _rel_reports_output_dir ${PROJECT_SOURCE_DIR} ${_reports_output_dir})
+    _spl_sphinx_relative_path(_rel_reports_output_dir ${_reports_output_dir})
     set(_reports_html_output_dir ${_reports_output_dir}/html)
 
     # create the config.json file. This is exported as SPHINX_BUILD_CONFIGURATION_FILE env variable
@@ -641,13 +754,15 @@ Code Coverage
     set(COV_OUT_VARIANT_JSON variant-coverage.json)
     set(JUNIT_OUT_VARIANT_XML variant-junit.xml)
 
+    # The command passes -E to sphinx-build to make sure all files are regenerated.
+    _spl_sphinx_build_command(_spl_sphinx_build SHAPE reports CONFIG ${_reports_config_json} OUTPUT_DIR ${_reports_html_output_dir})
+    _spl_sphinx_binary_dir_check(_spl_sphinx_check)
     add_custom_target(
         reports
         ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory ${_reports_output_dir}
-
-        # We need to call sphinx-build with -E to make sure all files are regenerated.
-        COMMAND ${CMAKE_COMMAND} -E env SPHINX_BUILD_CONFIGURATION_FILE=${_reports_config_json} AUTOCONF_JSON_FILE=${AUTOCONF_JSON} VARIANT=${VARIANT} -- sphinx-build -E -b html ${PROJECT_SOURCE_DIR} ${_reports_html_output_dir}
+        ${_spl_sphinx_check}
+        COMMAND ${_spl_sphinx_build}
         BYPRODUCTS ${_reports_html_output_dir}/index.html
         DEPENDS ${JUNIT_OUT_VARIANT_XML} ${COV_OUT_VARIANT_JSON} _components_variant_coverage_html_target source_docs
     )
@@ -873,6 +988,22 @@ function(_spl_source_doc_name out_var src_file base_dir)
     set(${out_var} "${_rel}" PARENT_SCOPE)
 endfunction()
 
+# clanguru can wrap each code listing it generates in Jinja `{% raw %}` and
+# `{% endraw %}` lines, so that a project rendering its documents through a Jinja
+# `source-read` hook, as the kickstart template's conf.py does, does not trip over
+# braces in the C code. A project without such a hook turns this off; otherwise
+# the two markers appear as text on every listing page.
+option(SPL_SOURCE_DOCS_JINJA_RAW_TAGS "Wrap the code listings clanguru generates in Jinja raw tags" ON)
+
+# The formatting options passed to `clanguru docs`, as this project configures them.
+function(_spl_clanguru_docs_options out_var)
+    set(_options --format rst)
+    if(SPL_SOURCE_DOCS_JINJA_RAW_TAGS)
+        list(APPEND _options --jinja-raw-tags)
+    endif()
+    set(${out_var} ${_options} PARENT_SCOPE)
+endfunction()
+
 macro(_spl_generate_clanguru_source_docs COMPONENT_NAME SRC_FILES)
     if(NOT CLANGURU_EXECUTABLE)
         find_program(CLANGURU_EXECUTABLE clanguru)
@@ -885,6 +1016,7 @@ macro(_spl_generate_clanguru_source_docs COMPONENT_NAME SRC_FILES)
     set(_clanguru_docs_out_dir ${CMAKE_CURRENT_BINARY_DIR}/__source_docs)
     set(_clanguru_doc_outputs "")
     set(_clanguru_doc_names "")
+    _spl_clanguru_docs_options(_clanguru_docs_options)
     foreach(_src_file ${SRC_FILES})
         _spl_source_doc_name(_src_doc_name "${_src_file}" "${CMAKE_CURRENT_SOURCE_DIR}")
         set(_doc_output ${_clanguru_docs_out_dir}/${_src_doc_name}.rst)
@@ -896,8 +1028,7 @@ macro(_spl_generate_clanguru_source_docs COMPONENT_NAME SRC_FILES)
                 --source-file ${_src_file}
                 --output-file ${_doc_output}
                 --compilation-database ${CMAKE_BINARY_DIR}/compile_commands.json
-                --format rst
-                --jinja-raw-tags
+                ${_clanguru_docs_options}
             DEPENDS ${_src_file}
             COMMENT "Generating RST docs for ${_src_doc_name} (${COMPONENT_NAME})"
         )
@@ -929,7 +1060,7 @@ macro(_spl_generate_clanguru_source_docs COMPONENT_NAME SRC_FILES)
         file(WRITE ${_clanguru_docs_out_dir}/index.rst "${_source_docs_index_content}")
 
         # Expose source_docs directory for Sphinx include patterns
-        file(RELATIVE_PATH _rel_clanguru_docs_out_dir ${PROJECT_SOURCE_DIR} ${_clanguru_docs_out_dir})
+        _spl_sphinx_relative_path(_rel_clanguru_docs_out_dir ${_clanguru_docs_out_dir})
         set(_COMPONENT_SOURCE_DOCS_INCLUDE_PATTERN "${_rel_clanguru_docs_out_dir}/**")
     endif()
 endmacro(_spl_generate_clanguru_source_docs)
