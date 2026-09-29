@@ -73,6 +73,23 @@ generates, see {ref}`SPL_SPHINX_BINARY_DIR <SPL_SPHINX_BINARY_DIR>`.
 set(SPL_SPHINX_SOURCE_DIR docs)
 ```
 
+(SPL_SPHINX_OPTIONS)=
+
+## SPL_SPHINX_OPTIONS and SPL_SPHINX_COMPONENT_OPTIONS
+
+Options added to every `sphinx-build` spl-core runs: `SPL_SPHINX_OPTIONS` to the
+variant `docs` and `reports` builds, `SPL_SPHINX_COMPONENT_OPTIONS` to the
+per-component docs and report builds. In both, `@SHAPE@` becomes `docs` or
+`reports` and `@COMPONENT_PATH@` the component's path relative to the project
+root (empty for the variant builds), so each run can name a file of its own.
+
+**Default:** none
+
+```cmake
+set(SPL_SPHINX_OPTIONS -D spl_selection=${CMAKE_BINARY_DIR}/selection/@SHAPE@.toml)
+set(SPL_SPHINX_COMPONENT_OPTIONS -D spl_selection=${CMAKE_BINARY_DIR}/selection/@COMPONENT_PATH@/@SHAPE@.toml)
+```
+
 (SPL_SPHINX_BINARY_DIR)=
 
 ## SPL_SPHINX_BINARY_DIR
@@ -93,10 +110,14 @@ gcovr HTML report is written to next to its coverage page, and the report
 artifacts `SplBuild` looks up. A relative path is taken relative to the project
 root.
 
-Because the path usually is a link the project re-points, every docs and reports
-build first checks that it still leads to its own binary directory, and fails
-with a message naming both paths if another build directory was configured in
-the meantime.
+When the path is a link the project re-points, every docs and reports build first
+checks that it still leads to its own binary directory, and fails with a message
+naming both paths if another build directory was configured in the meantime.
+When the path does not exist on disk, the project reaches the binary directory
+another way, for example by mounting it at that path with
+[sphinx-mounts](https://github.com/useblocks/sphinx-mounts) and naming each
+build's directory in its runs' options ({ref}`SPL_SPHINX_OPTIONS <SPL_SPHINX_OPTIONS>`),
+and there is nothing to check.
 
 **Default:** the binary directory itself (`CMAKE_BINARY_DIR`)
 
